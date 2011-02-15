@@ -1,11 +1,15 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+# Author: Thorsten Kranz <thorstenkranz@gmail.com>
+# License: Simplified BSD
+# Feedback welcome!!!
+
 import copy
 import numpy as np
 from scipy.stats import f_oneway, percentileofscore
 
-"""Clustering algorithm as described in 
+"""Cluster permutation algorithm as described in 
 Maris/Oostenveld (2007), "Nonparametric statistical testing of EEG- and MEG-data"
 Journal of Neuroscience Methods, Vol. 164, No. 1. (15 August 2007), pp. 177-190. 
 doi:10.1016/j.jneumeth.2007.03.024
@@ -68,17 +72,17 @@ class ClusterSearch1d:
 
         #print len(al), [ar.shape for ar in al]
         ns_trs = [ar.shape[1] for ar in al] # Number of trials for each group
-        #if not self._not_anova:
-        #    crit_f = fprobi(len(al)-1,np.sum(ns_trs)-1,self._threshold) #Critical F-value
-        #else:
         crit_f = self._threshold
         l=al[0].shape[0]
-        #Calculate Anova (or other stat_fun)
+        #Step 1: Calculate Anova (or other stat_fun) for original data
+        #-------------------------------------------------------------
         fs = np.zeros((l),"d")
         for i in range(l):
             anova_ars = [ar[i,:] for ar in al]
             fs[i] = sf(*anova_ars)
-        clusters = self.find_clusters(fs,crit_f,"greater")
+        clusters = self.find_clusters(fs,crit_f,"greater") 
+        #Step 2: If we have some clusters, repeat process for num_surrogates surrogates
+        #------------------------------------------------------------------------------
         if len(clusters)>0:
             cluster_stats = [np.sum(fs[c[0]:c[1]]) for c in clusters]
             cluster_ps = np.ones((len(clusters)),"d")
@@ -101,6 +105,8 @@ class ClusterSearch1d:
                     cluster_stats_hist[i_s] = max(cluster_stats_perm)
                 else:
                     cluster_stats_hist[i_s] = 0
+            #for each cluster in original data, calculate p-value as percentile of its 
+            #cluster statistics within all cluster statistics in surrogate data
             cluster_ps[:] = [percentileofscore(cluster_stats_hist,cluster_stats[i_cl]) for i_cl in range(len(clusters))]
             cluster_ps[:] = (100.0 - cluster_ps[:]) / 100.0 # From percent to fraction
             return fs, np.array(clusters)[cluster_ps<0.05], cluster_ps[cluster_ps<0.05], np.array(clusters), cluster_ps
@@ -130,4 +136,37 @@ class ClusterSearch1d:
         clusters = [(c[0],c[1]) for c in in_out]
         return clusters
 
+if __name__ == "__main__":
+    noiselevel = 40 
+    condition1 = np.random.random((500,50))*noiselevel
+    normfactor = np.hanning(20).sum()
+    for i in range(50):
+        condition1[:,i] = np.convolve(condition1[:,i],np.hanning(20),mode="same")/normfactor
+    condition2 = np.random.random((500,43))*noiselevel
+    for i in range(43):
+        condition2[:,i] = np.convolve(condition2[:,i],np.hanning(20),mode="same")/normfactor
+    pseudoekp = np.hanning(200).reshape(-1,1).repeat(50,axis=1)
+    condition1[200:400,:]+=pseudoekp[:]
+    condition2[200:400,:]-=pseudoekp[:,:43]
+    cs = ClusterSearch1d([condition1,condition2],num_surrogates=100)
+    fs, signif_cluster_times, signif_cluster_probs, cluster_times, cluster_probs = cs.search()
 
+    #Plotting for a better understanding
+    import pylab as p
+    p.subplot(211)
+    p.plot(condition1.mean(axis=1),label="Condition 1")
+    p.plot(condition2.mean(axis=1),label="Condition 2")
+    p.ylabel("signal [a.u.]")
+    p.subplot(212)
+    for i_c in range(len(cluster_times)):
+        start, end = cluster_times[i_c]
+        p.axvspan(start,end,color="b",alpha=0.3)
+        p.text(start,2,"%.2f"%cluster_probs[i_c],fontsize=8)
+    for i_c in range(len(signif_cluster_times)):
+        start, end = signif_cluster_times[i_c]
+        p.axvspan(start,end,0.95,1.0,color="b",alpha=1.0)
+    p.plot(fs)
+    p.xlabel("timepoints")
+    p.ylabel("f-values")
+    p.show()
+                                                                                                                                                   
